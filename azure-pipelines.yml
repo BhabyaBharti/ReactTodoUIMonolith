@@ -6,7 +6,7 @@
 trigger:
 - none
 
-pool: default
+pool: Initial Pool
 
 stages:
   - stage: Build_UI
