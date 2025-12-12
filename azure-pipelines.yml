@@ -19,6 +19,8 @@ stages:
       - job: Install_Dependencies_and_Build_ReactUI
         displayName: Install dependencies and build
         steps:
+        - checkout: self
+          clean: true
         - task: NodeTool@0
           displayName: Install NodeJS 16.x
           inputs:
@@ -60,6 +62,8 @@ stages:
         displayName: Install Biome and Lint React App
 
         steps:
+        - checkout: self
+          clean: true
         - task: PowerShell@2
           displayName: Install and Run Biome
           inputs:
