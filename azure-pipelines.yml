@@ -170,7 +170,3 @@ stages:
                     sudo systemctl restart nginx
                     echo "Nginx restarted successfully in QA env."
                   readyTimeout: '20000'
-              
-
-              
-        
