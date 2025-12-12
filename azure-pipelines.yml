@@ -8,6 +8,17 @@ trigger:
 variables:
 - name: buildDir
   value: '$(System.DefaultWorkingDirectory)/build/'
+- name: artifact
+  value: todoapp-build-artifact
+
+parameters:
+  - name: env
+    displayName: Do you want to deploy ReactToDo to Dev?
+    type: string
+    default: Dev
+    values:
+      - Dev
+      - QA
 
 pool: Azure Pipelines
 
@@ -30,13 +41,13 @@ stages:
           displayName: npm Install
           inputs:
             targetType: 'inline'
-            script: 'npm install'
+            script: npm install
 
         - task: PowerShell@2
           displayName: Build npm
           inputs:
             targetType: 'inline'
-            script: 'npm run build'
+            script: npm run build
 
         - task: ArchiveFiles@2
           displayName: Archive Artifacts
@@ -51,7 +62,7 @@ stages:
           displayName: Publish Build Artefacts
           inputs:
             targetPath: '$(buildDir)'
-            artifact: 'todoapp-build-artifact'
+            artifact: '$(artifact)'
             publishLocation: 'pipeline'
 
   - stage: Lint
@@ -60,42 +71,107 @@ stages:
     jobs:
       - job: Linting
         displayName: Install Biome and Lint React App
+        continueOnError: true
 
         steps:
         - checkout: self
           clean: true
+
+        - task: NodeTool@0
+          displayName: Install NodeJS 16.x
+          inputs:
+            versionSpec: '16.x'
         - task: PowerShell@2
           displayName: Install and Run Biome
           inputs:
             targetType: 'inline'
             script: |
-              # Allow script to continue even if a command reports an error
               $ErrorActionPreference = "Continue"
-
-              Write-Host "Checking Node installation..."
-              (Get-Command node -ErrorAction SilentlyContinue) || Write-Host "Node not found, continuing anyway..."
-
-              Write-Host "Installing Biome..."
-              npm install --save-dev @biomejs/biome || Write-Host "Biome installation failed, continuing..."
-
-              Write-Host "Initializing Biome..."
-              npx biome init || Write-Host "Biome init failed, continuing..."
-
-              Write-Host "Running Biome Lint..."
-              npx biome lint . || Write-Host "Biome lint failed, continuing..."
-
-              Write-Host "Running Biome Format..."
-              npx biome format . || Write-Host "Biome format failed, continuing..."
-
-              Write-Host "Running Biome Check..."
-              npx biome check . || Write-Host "Biome check failed, continuing..."
-
-              Write-Host "Applying fixes..."
-              npx biome check --write || Write-Host "Biome write failed, continuing..."
-
-              Write-Host "Biome linting completed with non-blocking warnings."
-
-              # Force success regardless of above errors
+              npm install --save-dev @biomejs/biome
+              npx biome init
+              npx biome lint .
+              npx biome format .
+              npx biome check .
+              npx biome check --write
               exit 0
 
+  - stage: Deploy
+    displayName: DeployToVM
+    dependsOn: [ Build, Lint ]
+
+    jobs:
+      - deployment: DeployToDev
+        displayName: Deploy To Dev
+        condition: and(succeeded(), eq('${{ parameters.env }}', 'Dev'))
+        environment: Dev
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              - task: DownloadBuildArtifacts@1
+                displayName: Download Artifacts to Dev env
+                inputs:
+                  buildType: 'current'
+                  downloadType: 'single'
+                  artifactName: '$(artifact)'
+                  downloadPath: '$(Pipeline.Workspace)/todoapp-build-artifact'
+                  
+              - task: CopyFilesOverSSH@0
+                displayName: Copy Build Artifact to Dev VM
+                inputs:
+                  sshEndpoint: 'sshSC'
+                  sourceFolder: '$(Pipeline.Workspace)/todoapp-build-artifact'
+                  contents: '**'
+                  targetFolder: '/var/www/html'
+                  readyTimeout: '20000'
+
+              - task: SSH@0
+                displayName: Restart Nginx in Dev VM
+                inputs:
+                  sshEndpoint: 'sshSC'
+                  runOptions: 'commands'
+                  commands: |
+                    sudo systemctl restart nginx
+                    echo "Nginx restarted successfully in Dev env."
+                  readyTimeout: '20000'
+
+      - deployment: DeployToQA
+        displayName: Deploy to QA
+        environment: QA
+        condition: and(succeeded(), eq('${{parameters.env}}', 'QA'))
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              - task: DownloadBuildArtifacts@1
+                displayName: Download Artifacts to QA env
+                inputs:
+                  buildType: 'current'
+                  downloadType: 'single'
+                  artifactName: '$(artifact)'
+                  downloadPath: '$(Pipeline.Workspace)/todoapp-build-artifact'
+                  
+              - task: CopyFilesOverSSH@0
+                displayName: Copy Build Artifact to QA VM
+                inputs:
+                  sshEndpoint: 'sshSC'
+                  sourceFolder: '$(Pipeline.Workspace)/todoapp-build-artifact'
+                  contents: '**'
+                  targetFolder: '/var/www/html'
+                  readyTimeout: '20000'
+
+              - task: SSH@0
+                displayName: Restart Nginx in QA env
+                inputs:
+                  sshEndpoint: 'sshSC'
+                  runOptions: 'commands'
+                  commands: |
+                    sudo systemctl restart nginx
+                    echo "Nginx restarted successfully in QA env."
+                  readyTimeout: '20000'
+              
+
+              
         
